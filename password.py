@@ -1,14 +1,57 @@
 import streamlit as st
 import re
-import zxcvbn  # Password strength estimation library
+from datetime import datetime, timedelta
 
-def check_password_strength(password):
-    """Check password strength using zxcvbn algorithm"""
+def estimate_crack_time(password):
+    """Simple crack time estimation"""
+    if not password:
+        return "instant"
+    
+    char_space = 0
+    if re.search(r'[a-z]', password): char_space += 26
+    if re.search(r'[A-Z]', password): char_space += 26
+    if re.search(r'[0-9]', password): char_space += 10
+    if re.search(r'[^A-Za-z0-9]', password): char_space += 32
+    
+    combinations = char_space ** len(password)
+    guesses_per_second = 1e4  # Conservative estimate
+    
+    seconds = combinations / guesses_per_second
+    
+    if seconds < 60:
+        return "less than a minute"
+    elif seconds < 3600:
+        return f"about {int(seconds/60)} minutes"
+    elif seconds < 86400:
+        return f"about {int(seconds/3600)} hours"
+    elif seconds < 31536000:
+        return f"about {int(seconds/86400)} days"
+    else:
+        return f"about {int(seconds/31536000)} years"
+
+def password_strength(password):
+    """Calculate password strength score (0-4)"""
     if not password:
         return 0, "No password entered"
     
-    result = zxcvbn.zxcvbn(password)
-    score = result['score']  # 0-4 scale
+    score = 0
+    
+    # Length check
+    if len(password) >= 8: score += 1
+    if len(password) >= 12: score += 1
+    
+    # Complexity checks
+    checks = [
+        bool(re.search(r'[a-z]', password)),
+        bool(re.search(r'[A-Z]', password)),
+        bool(re.search(r'[0-9]', password)),
+        bool(re.search(r'[^A-Za-z0-9]', password))
+    ]
+    
+    score += sum(checks)
+    
+    # Cap at 4
+    score = min(score, 4)
     
     feedback = {
         0: "Very Weak",
@@ -18,82 +61,41 @@ def check_password_strength(password):
         4: "Very Strong"
     }
     
-    return score, feedback[score], result['feedback']['suggestions']
-
-def password_complexity_checks(password):
-    """Perform basic complexity checks"""
-    checks = {
-        "length": len(password) >= 8,
-        "lowercase": bool(re.search(r'[a-z]', password)),
-        "uppercase": bool(re.search(r'[A-Z]', password)),
-        "digit": bool(re.search(r'[0-9]', password)),
-        "special": bool(re.search(r'[^A-Za-z0-9]', password))
-    }
-    
-    return checks
+    return score, feedback[score]
 
 def main():
     st.set_page_config(page_title="Password Strength Meter", page_icon="🔒")
-    
     st.title("🔒 Password Strength Meter")
-    st.write("Check how strong your password is and get improvement suggestions")
     
-    # Password input
-    password = st.text_input("Enter your password:", type="password", help="Type or paste your password to check its strength")
+    password = st.text_input("Enter password:", type="password")
     
     if password:
-        # Check strength with zxcvbn
-        score, strength, suggestions = check_password_strength(password)
+        score, strength = password_strength(password)
+        crack_time = estimate_crack_time(password)
         
-        # Display strength meter
-        st.subheader("Password Strength")
-        
-        # Color-coded strength bar
+        # Visual strength meter
         colors = ["#ff0000", "#ff4000", "#ff8000", "#ffbf00", "#00ff00"]
         st.markdown(f"""
-        <div style="background-color: #f0f0f0; border-radius: 5px; padding: 3px; margin-bottom: 10px;">
+        <div style="background-color: #f0f0f0; border-radius: 5px; padding: 3px; margin: 10px 0;">
             <div style="background-color: {colors[score]}; width: {(score+1)*20}%; height: 20px; border-radius: 3px;"></div>
         </div>
         <p style="text-align: center; font-weight: bold; color: {colors[score]}">{strength}</p>
         """, unsafe_allow_html=True)
         
-        # Display crack time estimate
-        if score < 4:
-            st.warning(f"Estimated time to crack: {zxcvbn.zxcvbn(password)['crack_times_display']['offline_slow_hashing_1e4_per_second']}")
-        else:
-            st.success(f"Estimated time to crack: {zxcvbn.zxcvbn(password)['crack_times_display']['offline_slow_hashing_1e4_per_second']}")
+        st.write(f"Estimated crack time: {crack_time}")
         
-        # Display complexity checks
-        st.subheader("Complexity Checks")
-        checks = password_complexity_checks(password)
-        
-        cols = st.columns(5)
-        metrics = [
-            ("Length ≥8", checks["length"]),
-            ("Lowercase", checks["lowercase"]),
-            ("Uppercase", checks["uppercase"]),
-            ("Digit", checks["digit"]),
-            ("Special", checks["special"])
+        # Complexity checks
+        st.subheader("Requirements met:")
+        cols = st.columns(4)
+        checks = [
+            ("Length ≥8", len(password) >= 8),
+            ("Uppercase", bool(re.search(r'[A-Z]', password))),
+            ("Digit", bool(re.search(r'[0-9]', password))),
+            ("Special char", bool(re.search(r'[^A-Za-z0-9]', password)))
         ]
         
-        for i, (label, passed) in enumerate(metrics):
-            cols[i].metric(label, "✓" if passed else "✗", delta_color="off")
-        
-        # Display suggestions if password is weak
-        if score < 3 and suggestions:
-            st.subheader("Improvement Suggestions")
-            for suggestion in suggestions:
-                st.info(f"💡 {suggestion}")
-        
-        # Password generation option
-        if st.checkbox("Generate a strong password for me"):
-            generated_pw = st.secrets["password_generator"]["strong_password"] if "password_generator" in st.secrets else "Xk8@q3$zL9!mN2#"
-            st.code(generated_pw, language="text")
-            st.button("Copy to clipboard")
-    
-    st.markdown("---")
-    st.write("ℹ️ This tool evaluates password strength without storing or transmitting your password.")
-    st.caption("Made with ❤️ using Streamlit and zxcvbn")
+        for i, (label, met) in enumerate(checks):
+            cols[i].metric(label, "✓" if met else "✗")
 
 if __name__ == "__main__":
     main()
